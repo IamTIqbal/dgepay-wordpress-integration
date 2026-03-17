@@ -5,11 +5,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 use Automattic\WooCommerce\Blocks\Payments\Integrations\AbstractPaymentMethodType;
 
-class Bkash_Blocks_Payment_Method extends AbstractPaymentMethodType {
-    protected $name = 'bkash';
+class DgePay_Blocks_Payment_Method extends AbstractPaymentMethodType {
+    protected $name = 'dgepay';
 
     public function initialize() {
-        $this->settings = get_option( 'woocommerce_bkash_settings', array() );
+        $this->settings = get_option( 'woocommerce_dgepay_settings', array() );
     }
 
     public function is_active() {
@@ -18,18 +18,17 @@ class Bkash_Blocks_Payment_Method extends AbstractPaymentMethodType {
             return false;
         }
 
-        return ! empty( $this->settings['username'] )
-            && ! empty( $this->settings['password'] )
-            && ! empty( $this->settings['app_key'] )
-            && ! empty( $this->settings['app_secret'] );
+        return ! empty( $this->settings['client_id'] )
+            && ! empty( $this->settings['client_secret'] )
+            && ! empty( $this->settings['client_api_key'] );
     }
 
     public function get_payment_method_script_handles() {
-        $handle = 'bkash-blocks';
+        $handle = 'dgepay-blocks';
 
         wp_register_script(
             $handle,
-            plugins_url( 'assets/js/bkash-blocks.js', dirname( __FILE__ ) ),
+            plugins_url( 'assets/js/dgepay-blocks.js', dirname( __FILE__ ) ),
             array(
                 'wc-blocks-registry',
                 'wc-settings',
@@ -45,8 +44,8 @@ class Bkash_Blocks_Payment_Method extends AbstractPaymentMethodType {
     }
 
     public function get_payment_method_data() {
-        $title = isset( $this->settings['title'] ) ? $this->settings['title'] : __( 'bKash', 'bkash' );
-        $description = isset( $this->settings['description'] ) ? $this->settings['description'] : __( 'Pay securely using bKash.', 'bkash' );
+        $title = isset( $this->settings['title'] ) ? $this->settings['title'] : __( 'DgePay', 'dgepay' );
+        $description = isset( $this->settings['description'] ) ? $this->settings['description'] : __( 'Pay securely using DgePay.', 'dgepay' );
 
         return array(
             'title'       => $title,

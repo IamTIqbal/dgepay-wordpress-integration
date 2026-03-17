@@ -1,132 +1,114 @@
 <?php
-
-class Bkash_API {
+// DgePay API integration class
+class DgePay_API {
     private array $config;
     private bool $debug;
 
-    public function __construct( array $config, bool $debug = false ) {
+    public function __construct(array $config, bool $debug = false) {
         $this->config = $config;
         $this->debug  = $debug;
     }
 
-    private function log( string $level, string $message, array $context = array() ): void {
-        if ( ! $this->debug || ! function_exists( 'wc_get_logger' ) ) {
-            return;
+    private function get_client(): \DgePay\DgePay {
+        $client = new \DgePay\DgePay([
+            'client_id'      => trim( (string) ( $this->config['client_id'] ?? '' ) ),
+            'client_secret'  => trim( (string) ( $this->config['client_secret'] ?? '' ) ),
+            'client_api_key' => trim( (string) ( $this->config['client_api_key'] ?? '' ) ),
+            'base_url'       => trim( (string) ( $this->config['base_url'] ?? '' ) ),
+        ]);
+
+        if ( $this->debug && function_exists( 'wc_get_logger' ) ) {
+            $logger = wc_get_logger();
+            $client->setLogger( function( $level, $message, $context ) use ( $logger ) {
+                $logger->log( $level, $message, array( 'source' => 'dgepay' ) + (array) $context );
+            } );
         }
 
-        $logger = wc_get_logger();
-        $logger->log( $level, $message, array( 'source' => 'bkash' ) + $context );
+        return $client;
     }
 
-    private function get_config( string $key ): string {
-        return trim( (string) ( $this->config[ $key ] ?? '' ) );
-    }
-
-    private function post_json( string $url, array $headers, array $payload ): array {
-        $ch = curl_init( $url );
-        curl_setopt_array( $ch, array(
-            CURLOPT_CUSTOMREQUEST  => 'POST',
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POSTFIELDS     => wp_json_encode( $payload ),
-            CURLOPT_HTTPHEADER     => array_merge( array( 'Content-Type: application/json' ), $headers ),
-            CURLOPT_TIMEOUT        => 25,
-        ) );
-
-        $result   = curl_exec( $ch );
-        $httpCode = (int) curl_getinfo( $ch, CURLINFO_HTTP_CODE );
-        $error    = curl_error( $ch );
-        curl_close( $ch );
-
-        $decoded = is_string( $result ) ? json_decode( $result, true ) : null;
-
-        return array(
-            'http_code' => $httpCode,
-            'raw'       => $result,
-            'data'      => is_array( $decoded ) ? $decoded : null,
-            'error'     => $error,
-        );
-    }
-
-    public function get_id_token(): array {
-        $base_url = $this->get_config( 'base_url' );
-        $response = $this->post_json(
-            $base_url . '/tokenized/checkout/token/grant',
-            array(
-                'username: ' . $this->get_config( 'username' ),
-                'password: ' . $this->get_config( 'password' ),
-            ),
-            array(
-                'app_key'    => $this->get_config( 'app_key' ),
-                'app_secret' => $this->get_config( 'app_secret' ),
-            )
-        );
-
-        $id_token = $response['data']['id_token'] ?? null;
-        if ( $response['http_code'] !== 200 || ! $id_token ) {
-            $this->log( 'error', 'bKash authentication failed.', array( 'response' => $response ) );
+    public function initiate_payment( WC_Order $order, string $redirect_url, string $payment_method = '' ): array {
+        try {
+            $client = $this->get_client();
+        } catch ( \Throwable $e ) {
             return array(
                 'success' => false,
-                'message' => 'bKash authentication failed.',
-                'debug'   => $response,
+                'message' => $e->getMessage(),
             );
         }
 
-        return array( 'success' => true, 'id_token' => $id_token );
-    }
+        $amount = (float) $order->get_total();
 
-    public function create_payment( string $id_token, array $payment_payload ): array {
-        $base_url = $this->get_config( 'base_url' );
-        $response = $this->post_json(
-            $base_url . '/tokenized/checkout/create',
-            array(
-                'Authorization: ' . $id_token,
-                'x-app-key: ' . $this->get_config( 'app_key' ),
+        $unique_txn_id = $order->get_meta( '_dgepay_unique_txn_id', true );
+        if ( empty( $unique_txn_id ) && class_exists( '\DgePay\DgePay' ) ) {
+            $unique_txn_id = \DgePay\DgePay::generateTransactionId( 'DG' );
+            $order->update_meta_data( '_dgepay_unique_txn_id', $unique_txn_id );
+            $order->save();
+        }
+
+        $customer_id    = (string) $order->get_user_id();
+        $billing_email  = (string) $order->get_billing_email();
+        $order_number   = (string) $order->get_order_number();
+
+        $payment_data = array(
+            'amount'               => $amount,
+            'redirectUrl'          => $redirect_url,
+            'orderId'              => $unique_txn_id ? (string) $unique_txn_id : (string) $order->get_id(),
+            'description'          => sprintf( 'Order #%s', $order_number ),
+            'unique_user_reference'=> $customer_id !== '' ? $customer_id : $billing_email,
+            'meta_data'            => array(
+                'custom_field_1' => $order_number,
+                'custom_field_2' => $billing_email,
+                'custom_field_3' => $customer_id,
             ),
-            $payment_payload
         );
 
-        $bkash_url = $response['data']['bkashURL'] ?? null;
-        if ( $response['http_code'] !== 200 || ! $bkash_url ) {
-            $this->log( 'error', 'bKash create payment failed.', array( 'response' => $response ) );
+        if ( ! empty( $payment_method ) ) {
+            $payment_data['payment_method'] = $payment_method;
+        }
+
+        $result = $client->initiatePayment( $payment_data );
+
+        if ( empty( $result['success'] ) ) {
             return array(
                 'success' => false,
-                'message' => $response['data']['statusMessage'] ?? 'Failed to create bKash payment.',
-                'debug'   => $response,
+                'message' => $result['message'] ?? 'Failed to initiate DgePay payment.',
             );
         }
 
         return array(
-            'success'    => true,
-            'bkash_url'  => $bkash_url,
-            'payment_id' => $response['data']['paymentID'] ?? null,
-            'raw'        => $response['data'],
+            'success'        => true,
+            'payment_url'    => $result['payment_url'] ?? '',
+            'transaction_id' => $result['transaction_id'] ?? (string) $order->get_id(),
         );
     }
 
-    public function execute_payment( string $id_token, string $payment_id ): array {
-        $base_url = $this->get_config( 'base_url' );
-        $response = $this->post_json(
-            $base_url . '/tokenized/checkout/execute',
-            array(
-                'Authorization: ' . $id_token,
-                'x-app-key: ' . $this->get_config( 'app_key' ),
-            ),
-            array( 'paymentID' => $payment_id )
-        );
+    public function parse_callback( string $raw_data = '' ): ?array {
+        try {
+            $client = $this->get_client();
+        } catch ( \Throwable $e ) {
+            return null;
+        }
 
-        $tx_status = $response['data']['transactionStatus'] ?? null;
-        if ( $response['http_code'] !== 200 || $tx_status !== 'Completed' ) {
-            $this->log( 'error', 'bKash execute payment failed.', array( 'response' => $response ) );
+        if ( $raw_data === '' ) {
+            return null;
+        }
+
+        return $client->decryptCallbackData( $raw_data );
+    }
+
+    public function normalize_callback_result( array $params ): array {
+        try {
+            $client = $this->get_client();
+        } catch ( \Throwable $e ) {
             return array(
-                'success' => false,
-                'message' => $response['data']['statusMessage'] ?? 'Payment execution failed.',
-                'debug'   => $response,
+                'is_success'    => false,
+                'is_cancelled'  => false,
+                'unique_txn_id' => '',
+                'message'       => $e->getMessage(),
             );
         }
 
-        return array(
-            'success' => true,
-            'data'    => $response['data'],
-        );
+        return $client->parseCallbackResult( $params );
     }
 }

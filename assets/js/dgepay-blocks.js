@@ -1,19 +1,19 @@
 ( function() {
     const settings = window.wc && window.wc.wcSettings
-        ? window.wc.wcSettings.getSetting( 'bkash_data', {} )
+        ? window.wc.wcSettings.getSetting( 'dgepay_data', {} )
         : {};
 
-    const label = settings.title || 'bKash';
-    const description = settings.description || 'Pay securely using bKash.';
+    const label = settings.title || 'DgePay';
+    const description = settings.description || 'Pay securely using DgePay.';
 
     const Content = () => window.wp.element.createElement(
         'div',
-        { className: 'bkash-blocks-description' },
+        { className: 'dgepay-blocks-description' },
         description
     );
 
-    const BkashBlock = {
-        name: 'bkash',
+    const DgePayBlock = {
+        name: 'dgepay',
         label: window.wp.element.createElement( 'span', null, label ),
         content: window.wp.element.createElement( Content ),
         edit: window.wp.element.createElement( Content ),
@@ -25,6 +25,6 @@
     };
 
     if ( window.wc && window.wc.wcBlocksRegistry ) {
-        window.wc.wcBlocksRegistry.registerPaymentMethod( BkashBlock );
+        window.wc.wcBlocksRegistry.registerPaymentMethod( DgePayBlock );
     }
 } )();
